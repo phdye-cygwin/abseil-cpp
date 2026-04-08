@@ -1,11 +1,193 @@
 # Abseil - C++ Common Libraries
 
+## Cygwin Port (`cygwin/support` branch)
+
+This branch adds Cygwin support to Abseil LTS 20250512.1.
+
+Abseil does not officially support Cygwin. An upstream effort is underway ([abseil/abseil-cpp#2012](https://github.com/abseil/abseil-cpp/pull/2012), Carlo Bramini) but has not yet been merged. This branch carries 10 minimal patches -- 5 derived from that PR, 5 discovered during testing -- that bring the full test suite to 218/218 passing.
+
+The patches exist to support a Cygwin build of [Protocol Buffers 7.35.0](https://github.com/protocolbuffers/protobuf), which depends on this version of Abseil. They are intended as a stopgap until Cygwin support lands upstream.
+
+### Building on Cygwin
+
+Prerequisites: GCC 13+, CMake 3.16+, Cygwin x86_64.
+
+GoogleTest must be available for the test suite. Either let CMake download
+it (`ABSL_USE_GOOGLETEST_HEAD=ON`) or point to an installed copy
+(`ABSL_USE_EXTERNAL_GOOGLETEST=ON`). The second option is required if you
+plan to `cmake --install` and have downstream projects consume the result
+via `find_package(absl)` -- see [Install note](#install-note) below.
+
+**Option A** -- download GoogleTest at configure time:
+
+```bash
+mkdir build && cd build
+cmake /path/to/abseil-cpp \
+  -DCMAKE_CXX_STANDARD=17 \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CXX_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=1 -DGTEST_HAS_PTHREAD=1" \
+  -DABSL_BUILD_TESTING=ON \
+  -DABSL_USE_GOOGLETEST_HEAD=ON
+cmake --build . --parallel 8
+ctest --timeout 300
+```
+
+**Option B** -- use installed GoogleTest (required for install/release):
+
+```bash
+mkdir build && cd build
+cmake /path/to/abseil-cpp \
+  -DCMAKE_CXX_STANDARD=17 \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH=/usr/local \
+  -DCMAKE_CXX_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=1 -DGTEST_HAS_PTHREAD=1" \
+  -DABSL_BUILD_TESTING=ON \
+  -DABSL_USE_EXTERNAL_GOOGLETEST=ON \
+  -DABSL_FIND_GOOGLETEST=ON
+cmake --build . --parallel 8
+ctest --timeout 300
+```
+
+Both `-D` flags in `CMAKE_CXX_FLAGS` are required:
+
+- **`_GLIBCXX_USE_CXX11_ABI=1`** -- Cygwin's libstdc++ defaults to the
+  old COW string ABI (`sizeof(std::string)` = 8). Protobuf requires the
+  SSO ABI (`sizeof(std::string)` = 32). Both Abseil and Protobuf must
+  agree.
+
+- **`GTEST_HAS_PTHREAD=1`** -- googletest's header auto-detection
+  omits Cygwin from its pthread platform list. Without this flag,
+  `libgmock.a` and test binaries disagree on the `Mutex` class layout,
+  causing any gmock-based test to crash. Only needed when building tests.
+
+### Binary release
+
+Pre-built static libraries for Cygwin x86_64 (GCC 13.4.0, Release mode)
+are available on the
+[Releases](https://github.com/phdye-cygwin/abseil-cpp/releases) page,
+tagged for use with Protobuf 7.35.0.
+
+GoogleTest 1.16.0 is vendored inside the tarball under
+`lib/absl/vendor/`. Abseil's cmake config references `GTest::gtest` and
+`GTest::gmock` for test helper targets that protobuf's test suite requires;
+the vendored copy satisfies these references automatically without
+conflicting with any system-wide GoogleTest installation.
+
+The tarball installs to `/usr/local`, which avoids conflicting with any
+system abseil installed by the Cygwin package manager in `/usr`.
+
+```bash
+# Install
+cd / && tar xzf abseil-cpp-20250512.1-cygwin-x86_64.tar.gz
+```
+
+This places:
+- Libraries in `/usr/local/lib/libabsl_*.a`
+- Headers in `/usr/local/include/absl/`
+- CMake config in `/usr/local/lib/cmake/absl/`
+- Vendored GoogleTest in `/usr/local/lib/absl/vendor/`
+- pkg-config in `/usr/local/lib/pkgconfig/absl_*.pc`
+
+To use from CMake:
+
+```cmake
+list(APPEND CMAKE_PREFIX_PATH /usr/local)
+find_package(absl REQUIRED)
+```
+
+No separate `find_package(GTest)` is needed -- `abslConfig.cmake` finds
+the vendored copy automatically. If your project already loads GTest before
+finding abseil, the vendored copy is skipped.
+
+### Building with a custom prefix
+
+To install to a location other than `/usr/local`, add
+`-DCMAKE_INSTALL_PREFIX` to the cmake configure step and install after
+building:
+
+```bash
+mkdir build && cd build
+cmake /path/to/abseil-cpp \
+  -DCMAKE_CXX_STANDARD=17 \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX=/path/to/prefix \
+  -DCMAKE_PREFIX_PATH=/path/to/prefix \
+  -DCMAKE_CXX_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=1 -DGTEST_HAS_PTHREAD=1" \
+  -DABSL_BUILD_TESTING=ON \
+  -DABSL_USE_EXTERNAL_GOOGLETEST=ON \
+  -DABSL_FIND_GOOGLETEST=ON
+cmake --build . --parallel 8
+ctest --timeout 300
+cmake --install .
+```
+
+GoogleTest must be installed at the prefix before building abseil.
+`CMAKE_PREFIX_PATH` tells cmake where to find it.
+
+The cmake config files are relocatable -- they compute the prefix from
+their own install path, so `find_package(absl)` works regardless of
+where the tree is rooted, as long as the prefix is in
+`CMAKE_PREFIX_PATH`:
+
+```cmake
+list(APPEND CMAKE_PREFIX_PATH /path/to/prefix)
+find_package(absl REQUIRED)
+```
+
+### Downstream: Protobuf Cygwin port
+
+The matching Protobuf build is at [phdye-cygwin/protobuf](https://github.com/phdye-cygwin/protobuf) (branch `cygwin/update-port`), targeting Protobuf 7.35.0. Protobuf's CMake build fetches Abseil 20250512.1 from GitHub; the patches here must be applied to the fetched source after `cmake` configure and before `cmake --build`.
+
+### Known limitations
+
+- **Build time**: ~19 minutes on an 8-core machine with `-j8`.
+- **Test timeouts**: `ctest --timeout 300` is needed for two tests
+  that are slow by design, not due to Cygwin:
+  - `flags_sequence_lock_test` (~225s) -- 115 parameterized cases
+    each running a concurrent read/write loop with a hardcoded
+    5-second deadline.
+  - `mutex_test` (~103s) -- 72 timeout-verification cases with
+    deliberate sub-second sleeps (450ms, 900ms).
+    These would exceed a 60-second timeout on any platform.
+
+### Upstream tracking
+
+When [abseil/abseil-cpp#2012](https://github.com/abseil/abseil-cpp/pull/2012)
+merges, 5 of the 10 patches here become redundant (the 5 derived from
+that PR). The remaining patches address issues not covered by PR #2012:
+
+| Patch | Why it's separate |
+|-------|-------------------|
+| `config.h` (ABSL_HAVE_MMAP) | PR #2012 omits this; build fails without it |
+| `log/internal/config.h` (Tid width) | Thread ID truncation in log output |
+| `base/internal/raw_logging.cc` (POSIX write) | Raw log output silently discarded |
+| `strings/charconv_test.cc` (NaN) | Test-only: Cygwin strtod() platform difference |
+| `log/stripping_test.cc` (/proc/self/exe) | Test-only: Cygwin provides this like Linux |
+
+### Patch summary
+
+| File | Purpose |
+|------|---------|
+| `policy_checks.h` | Remove `#error "Cygwin is not supported"` |
+| `attributes.h` | Disable weak symbols (PE/COFF) |
+| `config.h` | Recognize Cygwin mmap support |
+| `low_level_alloc.h` | Correct allocation capability flags |
+| `sysinfo.cc` | Fix GetTID cast for pointer-sized `pthread_t` |
+| `sysinfo.h` | Widen `pid_t` to hold thread handle |
+| `log/internal/config.h` | Widen `Tid` to prevent thread ID truncation in logs |
+| `base/internal/raw_logging.cc` | Enable POSIX `write()` for raw log output |
+| `strings/charconv_test.cc` | Accommodate Cygwin `strtod()` NaN behavior |
+| `log/stripping_test.cc` | Enable `/proc/self/exe` path |
+
+---
+
 The repository contains the Abseil C++ library code. Abseil is an open-source
 collection of C++ code (compliant to C++17) designed to augment the C++
 standard library.
 
 ## Table of Contents
 
+- [Cygwin Port](#cygwin-port-cygwinsupport-branch)
 - [About Abseil](#about)
 - [Quickstart](#quickstart)
 - [Building Abseil](#build)

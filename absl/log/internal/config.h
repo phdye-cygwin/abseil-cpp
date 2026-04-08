@@ -34,6 +34,11 @@ namespace log_internal {
 
 #ifdef _WIN32
 using Tid = uint32_t;
+#elif defined(__CYGWIN__)
+// Cygwin's GetTID() returns reinterpret_cast<uintptr_t>(pthread_self()),
+// which is an 8-byte pointer on x86_64. System pid_t is int (4 bytes)
+// and would truncate the thread ID, causing collisions in log output.
+using Tid = uint64_t;
 #else
 using Tid = pid_t;
 #endif

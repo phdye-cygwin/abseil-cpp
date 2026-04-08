@@ -31,6 +31,13 @@
 #ifdef _MSC_FULL_VER
 #define ABSL_COMPILER_DOES_EXACT_ROUNDING 0
 #define ABSL_STRTOD_HANDLES_NAN_CORRECTLY 0
+#elif defined(__CYGWIN__)
+#define ABSL_COMPILER_DOES_EXACT_ROUNDING 1
+// Cygwin's strtod() handles NaN payloads differently for large or
+// non-numeric n-char-sequences (e.g., "abc123", very long digit strings).
+// The NaN payload encoding is unspecified per IEEE 754, so this is a
+// platform difference, not a bug.
+#define ABSL_STRTOD_HANDLES_NAN_CORRECTLY 0
 #else
 #define ABSL_COMPILER_DOES_EXACT_ROUNDING 1
 #define ABSL_STRTOD_HANDLES_NAN_CORRECTLY 1

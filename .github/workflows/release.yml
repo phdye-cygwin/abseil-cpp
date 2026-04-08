@@ -1,0 +1,162 @@
+name: Release (Cygwin)
+
+on:
+  push:
+    tags: ['*-cygwin']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    runs-on: windows-latest
+    name: Build and publish Cygwin x86_64
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: C:\cygwin\bin\bash.exe --noprofile --norc -eo pipefail '{0}'
+
+    steps:
+      - run: git config --global core.autocrlf input
+        shell: bash
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: cygwin/cygwin-install-action@8be4a7277a684c177c0fefca7d75c9c24a45055e # v6
+        with:
+          packages: |
+            gcc-g++
+            cmake
+            make
+            ninja
+            curl
+
+      - name: Build environment
+        run: >
+          echo "GCC=$(g++ -dumpfullversion) CMake=$(cmake --version | head -1) Cygwin=$(uname -r) CWD=$(pwd)"
+          && echo .
+
+      - name: Download GoogleTest
+        run: >
+          curl -fL -o gtest.tar.gz https://github.com/google/googletest/archive/refs/tags/v1.16.0.tar.gz
+          && ls -l gtest.tar.gz
+          && tar xzf gtest.tar.gz
+          && mv googletest-1.16.0 googletest-src
+          && ls -d googletest-src
+          && echo .
+
+      - name: Configure GoogleTest
+        run: >
+          cmake -S googletest-src -B gtest-build -G Ninja
+          -DCMAKE_CXX_STANDARD=17
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=1"
+          -DCMAKE_INSTALL_PREFIX="$PWD/staging/usr/local/lib/absl/vendor"
+          && echo .
+
+      - name: Build GoogleTest
+        run: ninja -C gtest-build -j4
+
+      - name: Install GoogleTest
+        run: cmake --install gtest-build
+
+      - name: Configure Abseil
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_CXX_STANDARD=17
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=1 -DGTEST_HAS_PTHREAD=1"
+          -DCMAKE_PREFIX_PATH="$PWD/staging/usr/local/lib/absl/vendor"
+          -DABSL_BUILD_TESTING=ON
+          -DABSL_USE_EXTERNAL_GOOGLETEST=ON
+          -DABSL_FIND_GOOGLETEST=ON
+          && echo .
+
+      - name: Build Abseil
+        run: ninja -C build -j4
+
+      - name: Test
+        run: ctest --test-dir build --timeout 300 --output-on-failure
+
+      - name: Install Abseil
+        run: >
+          cmake --install build --prefix "$PWD/staging/usr/local"
+          && echo .
+
+      - name: Patch abslConfig.cmake for vendored GoogleTest
+        run: >
+          printf '\n# Vendored GoogleTest for test helper targets (scoped_mock_log, status_matchers)\nif(NOT TARGET GTest::gtest)\n  find_package(GTest QUIET HINTS "${CMAKE_CURRENT_LIST_DIR}/../../absl/vendor/lib/cmake/GTest")\nendif()\n'
+          >> staging/usr/local/lib/cmake/absl/abslConfig.cmake
+          && echo .
+
+      - name: Package
+        run: >
+          tar czf "abseil-cpp-$GITHUB_REF_NAME-x86_64.tar.gz" -C staging usr
+          && echo .
+
+      - name: Checksum
+        run: >
+          sha256sum "abseil-cpp-$GITHUB_REF_NAME-x86_64.tar.gz" | tee checksums-sha256.txt
+          && echo .
+
+      - name: Create release notes
+        run: >
+          printf '%s\n'
+          "Pre-built static libraries and headers for Cygwin x86_64."
+          ""
+          "**Build environment**: GCC $(g++ -dumpfullversion), $(cmake --version | head -1), Cygwin $(uname -r), Release mode"
+          "**ABI**: \`-D_GLIBCXX_USE_CXX11_ABI=1\` (SSO strings, required for Protobuf compatibility)"
+          "**Prefix**: \`/usr/local\` (does not conflict with system abseil in \`/usr\`)"
+          "**GoogleTest**: 1.16.0, vendored at \`lib/absl/vendor/\`"
+          ""
+          "## Installation"
+          ""
+          "Extract at the filesystem root to install into \`/usr/local\`:"
+          ""
+          "\`\`\`bash"
+          "cd / && tar xzf abseil-cpp-$GITHUB_REF_NAME-x86_64.tar.gz"
+          "\`\`\`"
+          ""
+          "Verify checksum:"
+          ""
+          "\`\`\`bash"
+          "sha256sum -c checksums-sha256.txt"
+          "\`\`\`"
+          ""
+          "## Contents"
+          ""
+          "- Libraries in \`/usr/local/lib/libabsl_*.a\`"
+          "- Headers in \`/usr/local/include/absl/\`"
+          "- CMake config in \`/usr/local/lib/cmake/absl/\`"
+          "- Vendored GoogleTest in \`/usr/local/lib/absl/vendor/\`"
+          "- pkg-config in \`/usr/local/lib/pkgconfig/absl_*.pc\`"
+          ""
+          "## Usage"
+          ""
+          "\`\`\`cmake"
+          "list(APPEND CMAKE_PREFIX_PATH /usr/local)"
+          "find_package(absl REQUIRED)"
+          "\`\`\`"
+          ""
+          "No separate \`find_package(GTest)\` is needed."
+          ""
+          "## Purpose"
+          ""
+          "These binaries support the Cygwin port of Protocol Buffers 7.35.0 at"
+          "[phdye-cygwin/protobuf](https://github.com/phdye-cygwin/protobuf)."
+          > release-notes.md
+          && echo .
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME"
+          --title "Abseil LTS ${GITHUB_REF_NAME%-cygwin} — Cygwin x86_64"
+          --notes-file release-notes.md
+          "abseil-cpp-$GITHUB_REF_NAME-x86_64.tar.gz" checksums-sha256.txt
+          && echo .

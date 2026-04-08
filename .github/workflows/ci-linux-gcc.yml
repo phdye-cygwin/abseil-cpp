@@ -1,0 +1,41 @@
+name: CI (Linux / GCC)
+
+on:
+  push:
+    branches: [cygwin/support]
+  pull_request:
+    branches: [cygwin/support]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: ubuntu-latest / g++
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_CXX_STANDARD=17
+          -DCMAKE_BUILD_TYPE=Release
+          -DABSL_BUILD_TESTING=ON
+          -DABSL_USE_GOOGLETEST_HEAD=ON
+        env:
+          CC: gcc
+          CXX: g++
+
+      - name: Build
+        run: cmake --build build --parallel 4
+
+      - name: Test
+        run: ctest --test-dir build --timeout 300 --output-on-failure

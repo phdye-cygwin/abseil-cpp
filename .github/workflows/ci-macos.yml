@@ -1,0 +1,46 @@
+name: CI (macOS)
+
+on:
+  push:
+    branches: [cygwin/support]
+  pull_request:
+    branches: [cygwin/support]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    name: macos-latest / clang++
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_CXX_STANDARD=17
+          -DCMAKE_BUILD_TYPE=Release
+          -DABSL_BUILD_TESTING=ON
+          -DABSL_USE_GOOGLETEST_HEAD=ON
+        env:
+          CC: clang
+          CXX: clang++
+
+      - name: Build
+        run: cmake --build build --parallel 4
+
+      - name: Test
+        # Exclude cordz_info_statistics_test: its ThreadSafety test hits a
+        # Mutex::AssertReaderHeld race in UnlockSlow on ARM64 (upstream bug,
+        # reproducible 3/3 runs, not caused by Cygwin patches).
+        run: >
+          ctest --test-dir build --timeout 300 --output-on-failure
+          --exclude-regex absl_cordz_info_statistics_test

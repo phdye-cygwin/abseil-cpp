@@ -1,0 +1,46 @@
+name: CI (Windows / MSVC)
+
+on:
+  push:
+    branches: [cygwin/support]
+  pull_request:
+    branches: [cygwin/support]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    name: windows-latest / cl
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -G Ninja
+          -DCMAKE_CXX_STANDARD=17
+          -DCMAKE_BUILD_TYPE=Release
+          -DABSL_BUILD_TESTING=ON
+          -DABSL_USE_GOOGLETEST_HEAD=ON
+
+      - name: Build
+        run: cmake --build build --parallel 4
+
+      - name: Test
+        # Exclude absl_time_test: LoadTimeZone("America/New_York") fails because
+        # windows-latest runners lack IANA tz data and CCTZ's FileZoneInfoSource
+        # has no fallback to the Windows timezone API.
+        run: >
+          ctest --test-dir build --timeout 300 --output-on-failure
+          --exclude-regex absl_time_test

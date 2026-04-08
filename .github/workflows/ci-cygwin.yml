@@ -1,0 +1,58 @@
+# CI standard exceptions (upstream port — we own 10 patches, not the codebase):
+#   Lint:     No lint stage. Running clang-tidy on upstream code generates noise
+#             about style we don't control and shouldn't change.
+#   Coverage: No coverage reporting. Patches are platform-support glue, not new
+#             feature code; coverage on upstream tests doesn't inform our work.
+name: CI (Cygwin)
+
+on:
+  push:
+    branches: [cygwin/support]
+  pull_request:
+    branches: [cygwin/support]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cygwin:
+    runs-on: windows-latest
+    name: windows-latest / cygwin g++
+    timeout-minutes: 60
+
+    steps:
+      - run: git config --global core.autocrlf input
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: cygwin/cygwin-install-action@8be4a7277a684c177c0fefca7d75c9c24a45055e # v6
+        id: cygwin
+        with:
+          packages: |
+            gcc-g++
+            cmake
+            make
+            ninja
+
+      - name: Configure
+        shell: C:\cygwin\bin\bash.exe --noprofile --norc -eo pipefail '{0}'
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_CXX_STANDARD=17
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=1 -DGTEST_HAS_PTHREAD=1"
+          -DABSL_BUILD_TESTING=ON
+          -DABSL_USE_GOOGLETEST_HEAD=ON
+
+      - name: Build
+        shell: C:\cygwin\bin\bash.exe --noprofile --norc -eo pipefail '{0}'
+        run: ninja -C build -j4
+
+      - name: Test
+        shell: C:\cygwin\bin\bash.exe --noprofile --norc -eo pipefail '{0}'
+        run: ctest --test-dir build --timeout 300 --output-on-failure

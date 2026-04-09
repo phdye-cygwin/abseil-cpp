@@ -6,7 +6,11 @@ This branch adds Cygwin support to Abseil LTS 20250512.1.
 
 Abseil does not officially support Cygwin. An upstream effort is underway ([abseil/abseil-cpp#2012](https://github.com/abseil/abseil-cpp/pull/2012), Carlo Bramini) but has not yet been merged. This branch carries 10 minimal patches -- 5 derived from that PR, 5 discovered during testing -- that bring the full test suite to 218/218 passing.
 
-The patches exist to support a Cygwin build of [Protocol Buffers 7.35.0](https://github.com/protocolbuffers/protobuf), which depends on this version of Abseil. They are intended as a stopgap until Cygwin support lands upstream.
+The patches exist to support a Cygwin build of [Protocol Buffers v34.1](https://github.com/protocolbuffers/protobuf), which depends on this version of Abseil. They are intended as a stopgap until Cygwin support lands upstream.
+
+The end goal is `grpcio` (Python gRPC bindings) on Cygwin. The dependency chain is:
+
+    psutil <- pypinfo <- grpcio <- protobuf <- abseil-cpp
 
 ### Building on Cygwin
 

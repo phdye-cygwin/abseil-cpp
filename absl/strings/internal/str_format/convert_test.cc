@@ -151,12 +151,13 @@ std::string Esc(unsigned char v) { return EscCharImpl(v); }
 
 std::string Esc(wchar_t v) {
   char buf[64];
-  int n = std::iswprint(static_cast<wint_t>(v))
-              ? snprintf(buf, sizeof(buf), "L'%lc'", static_cast<wint_t>(v))
-              : snprintf(buf, sizeof(buf), "L'\\x%.*llx'",
-                         static_cast<int>(sizeof(wchar_t) * CHAR_BIT / 4),
-                         static_cast<unsigned long long>(
-                             static_cast<std::make_unsigned_t<wchar_t>>(v)));
+  // Cygwin's snprintf returns -1 for %lc with non-representable wide chars
+  // in the C locale, even when iswprint() reports them as printable.
+  // Always use the hex representation to avoid this platform divergence.
+  int n = snprintf(buf, sizeof(buf), "L'\\x%.*llx'",
+                   static_cast<int>(sizeof(wchar_t) * CHAR_BIT / 4),
+                   static_cast<unsigned long long>(
+                       static_cast<std::make_unsigned_t<wchar_t>>(v)));
   assert(n > 0 && static_cast<size_t>(n) < sizeof(buf));
   return std::string(buf, static_cast<size_t>(n));
 }
